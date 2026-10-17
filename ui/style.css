@@ -94,6 +94,7 @@ a { color: var(--info); }
 .meth { font: 600 10px var(--mono); width: 38px; flex: none; text-align: right; }
 .m-GET { color: var(--m-get); } .m-POST { color: var(--m-post); } .m-PUT { color: var(--m-put); } .m-PATCH { color: var(--m-patch); } .m-DELETE { color: var(--m-delete); }
 .m-HEAD, .m-OPTIONS, .m-WS, .m-SIO, .m-SSE { color: var(--m-other); }
+.m-gRPC { color: var(--m-put); }
 .empty { color: var(--mut); padding: 24px 16px; text-align: center; }
 .empty .btn { margin-top: 10px; }
 .group-label { color: var(--mut); font-size: 11px; font-weight: 600; padding: 10px 14px 4px; text-transform: uppercase; letter-spacing: .04em; }

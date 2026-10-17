@@ -1,18 +1,20 @@
 # Lightpost
 
 A lightweight, local-first API client with Postman's feature set. It is a
-single 16 MB Go binary that uses the system WebKit view (no Electron, no
+single 22 MB Go binary that uses the system WebKit view (no Electron, no
 account, no cloud).
 
 | | Lightpost | Postman 12.32 (measured on this Mac) |
 |---|---|---|
-| On disk | 16 MB | 463 MB |
-| RAM, window open & idle | ~210 MB total (112 MB app + ~97 MB system WebKit helpers) | ~808 MB |
+| On disk | 22 MB | 463 MB |
+| RAM, window open & idle | ~215 MB total (117 MB app + ~94 MB system WebKit helpers) | ~808 MB (measured with the workspace open at the time) |
 | Idle CPU | 0.0% (event-driven, no polling) | — |
 | Sign-in required | No | Yes for most features |
 
 See `research/FINDINGS.md` for the REA analysis of Postman that informed this
 design.
+
+Third-party JS: `jslib/lodash.min.js` and `jslib/moment.min.js` (MIT, licenses alongside).
 
 ## Run
 
@@ -49,7 +51,7 @@ runs.
 **Scripts**
 - Pre-request and test scripts at collection, folder and request level, run in an embedded JS engine (goja).
 - `pm.*` API: `environment`, `globals`, `collectionVariables`, `variables`, `iterationData`, `request`/`response`, `test`, `expect` (chai-style incl. `.not`, `.deep`, `.jsonSchema`), `sendRequest`, `cookies`, `visualizer`, `execution.setNextRequest`/`skipRequest`.
-- Also available: legacy `tests[]` and `postman.*`, `console`, `CryptoJS`, `atob`/`btoa`, and `require('crypto-js'|'chai'|'uuid')`.
+- Also available: legacy `tests[]` and `postman.*`, `console`, `CryptoJS`, `atob`/`btoa`, lodash (`_`) and `moment`, plus `require('lodash'|'moment'|'crypto-js'|'chai'|'uuid')`. Libraries load lazily, so scripts that don't use them pay nothing.
 
 **Response viewer**
 - Pretty view with JSON highlighting and a JSONPath filter.
@@ -71,6 +73,12 @@ runs.
 - Iterations, delay and CSV/JSON data files.
 - Request selection, `setNextRequest` flow control and stop-on-failure.
 - Streaming results with pass/fail filters, and exportable results.
+
+**gRPC**
+- Discovery via server reflection or imported `.proto` files.
+- Unary, server-streaming, client-streaming and bidirectional calls.
+- Metadata, TLS and generated example messages.
+- Response headers, trailers and status.
 
 **Realtime clients**
 - WebSocket (headers, subprotocols, text/binary).
@@ -130,13 +138,17 @@ locally instead:
 | Workspace sync / team sharing | Export/import JSON files (commit them to git) |
 
 ## Not yet implemented
-gRPC, MQTT, NTLM/Hawk/Akamai auth, a lodash/moment/faker sandbox library set,
-and team collaboration.
+- MQTT.
+- NTLM, Hawk and Akamai EdgeGrid auth.
+- faker / tv4 / cheerio / xml2js in the script sandbox (lodash, moment, CryptoJS and chai-style expect are included).
+- Real-time team collaboration. Share collections as exported files or through git instead.
+- Running two copies of the app at once is unsupported: they would both write `workspace.json` and compete for mock-server ports.
 
 ## Architecture
 - Go backend (`net/http`). Every request, WebSocket and SSE stream goes through it, so CORS never applies and headers are unrestricted.
 - Vanilla JS UI (no framework, ~150 KB), embedded in the binary and served on a random `127.0.0.1` port protected by a per-launch token.
 - `webview_go` hosts it in a WKWebView window.
+- UI state (open tabs, layout) is saved to `ui.json` by the server, because each launch uses a new random port and browser storage would reset.
 
 ## Tests
 `go test ./...` covers:
@@ -147,3 +159,5 @@ and team collaboration.
 - cURL, Postman and OpenAPI import.
 - Mock matching.
 - AWS SigV4 signing.
+- Script libraries (lodash, moment, CryptoJS).
+- gRPC reflection plus unary and server-streaming calls against a real server.

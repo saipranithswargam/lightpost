@@ -7,8 +7,8 @@ const S = {
   ws: null,
   tabs: [],
   active: null,
-  panel: store.get('panel', 'collections'),
-  expanded: new Set(store.get('expanded', [])),
+  panel: 'collections',
+  expanded: new Set(),
   history: [],
   mockStatus: [],
   filter: ''
@@ -28,8 +28,10 @@ function commit({ sidebar = true } = {}) {
   if (sidebar) renderSidebar();
   renderTabs();
 }
+// Only plain UI choices are persisted; t.ui also holds DOM nodes and closures.
+const persistableTab = t => ({ ...t, response: undefined, rt: undefined, run: undefined, abort: undefined, loading: undefined, ui: { sub: t.ui && t.ui.sub, resSub: t.ui && t.ui.resSub, split: t.ui && t.ui.split } });
 const saveTabs = debounce(() => {
-  store.set('tabs', S.tabs.map(t => ({ ...t, response: undefined, rt: undefined, run: undefined })));
+  store.set('tabs', S.tabs.map(persistableTab));
   store.set('active', S.active);
 }, 400);
 
@@ -121,7 +123,7 @@ const ICON = {
 };
 
 function methodLabel(r, type) {
-  if (type === 'realtime') return { WS: 'WS', SOCKETIO: 'SIO', SSE: 'SSE' }[r.method] || 'WS';
+  if (type === 'realtime') return { WS: 'WS', SOCKETIO: 'SIO', SSE: 'SSE', GRPC: 'gRPC' }[r.method] || 'WS';
   return ({ DELETE: 'DEL', OPTIONS: 'OPT' })[r.method] || r.method;
 }
 
@@ -238,7 +240,7 @@ function colMenu(e, c, row) {
   showMenu(e.clientX, e.clientY, [
     { label: 'Overview & settings', action: () => openCollectionTab(c.id) },
     { label: 'Add request', action: () => addRequest(c.id, null) },
-    { label: 'Add WebSocket / SSE request', action: () => addRealtime(c.id, null) },
+    { label: 'Add WebSocket / Socket.IO / SSE / gRPC request', action: () => addRealtime(c.id, null) },
     { label: 'Add folder', action: () => addFolder(c.id, null) },
     '-',
     { label: 'Run collection', action: () => openRunner(c.id) },
@@ -298,7 +300,7 @@ async function addRequest(colId, folderId) {
   openItem(colId, it.id);
 }
 async function addRealtime(colId, folderId) {
-  const name = await promptModal('New WebSocket / Socket.IO / SSE request', 'Realtime');
+  const name = await promptModal('New WebSocket / Socket.IO / SSE / gRPC request', 'Realtime');
   if (!name) return;
   const it = { id: uid(), name, type: 'realtime', request: { method: 'WS', url: '', headers: [], body: { mode: 'raw', raw: '' } } };
   const dest = folderId ? findItem(folderId).item : getCol(colId);
@@ -535,6 +537,7 @@ function renderView() {
       h('div', { style: { display: 'flex', gap: '8px', marginTop: '6px' } },
         h('button', { class: 'btn primary', onclick: () => openTab({ kind: 'request', name: 'Untitled Request', ref: null }) }, 'New request'),
         h('button', { class: 'btn', onclick: () => openTab({ kind: 'realtime', name: 'Untitled WebSocket', ref: null, draft: { method: 'WS', url: '', headers: [], body: { mode: 'raw', raw: '' } } }) }, 'New WebSocket'),
+        h('button', { class: 'btn', onclick: () => openTab({ kind: 'realtime', name: 'Untitled gRPC', ref: null, draft: { method: 'GRPC', url: '', headers: [], body: { mode: 'raw', raw: '{}' }, grpc: { method: '', tls: false } } }) }, 'New gRPC'),
         h('button', { class: 'btn', onclick: openImport }, 'Import'))));
     return;
   }
@@ -797,6 +800,9 @@ function bindGlobal() {
 }
 
 async function boot() {
+  await store.load();
+  S.panel = store.get('panel', 'collections');
+  S.expanded = new Set(store.get('expanded', []));
   S.ws = await api('/api/workspace');
   for (const k of ['collections', 'environments', 'globals', 'mocks', 'monitors']) S.ws[k] = S.ws[k] || [];
   applyTheme();
@@ -814,4 +820,9 @@ async function boot() {
   renderTabs();
   renderView();
 }
+window.addEventListener('pagehide', () => {
+  store.set('tabs', S.tabs.map(persistableTab));
+  store.set('active', S.active);
+  try { navigator.sendBeacon('/api/uistate', new Blob([JSON.stringify(store.data)], { type: 'application/json' })); } catch { /* best effort */ }
+});
 window.addEventListener('DOMContentLoaded', () => boot().catch(e => { document.body.innerHTML = '<div class="err-box" style="margin:40px"><b>Lightpost failed to start</b><br>' + esc(e.message) + '</div>'; }));

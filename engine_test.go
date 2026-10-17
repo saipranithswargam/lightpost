@@ -233,3 +233,25 @@ func TestAWSv4KnownVector(t *testing.T) {
 		t.Errorf("auth = %s", auth)
 	}
 }
+
+func TestScriptLibraries(t *testing.T) {
+	a := testApp(t)
+	var logs []LogEntry
+	src := `pm.test("lodash", () => pm.expect(_.sum([1,2,3])).to.equal(6));
+pm.test("lodash require", () => pm.expect(require('lodash').chunk([1,2,3,4], 2)).to.have.lengthOf(2));
+pm.test("moment", () => pm.expect(moment("2024-01-31").add(1, "day").format("YYYY-MM-DD")).to.equal("2024-02-01"));
+pm.test("crypto", () => pm.expect(CryptoJS.SHA256("abc").toString()).to.equal("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+pm.test("btoa", () => pm.expect(atob(btoa("héllo"))).to.equal("héllo"));`
+	res, err := a.engine.runScript(src, "t", ScriptInfo{}, &Request{Method: "GET", URL: "http://x"}, nil, newVars(nil, nil, nil, nil), &logs)
+	if err != nil {
+		t.Fatal(err, logs)
+	}
+	for _, r := range res.Tests {
+		if !r.Passed {
+			t.Errorf("%s: %s", r.Name, r.Error)
+		}
+	}
+	if len(res.Tests) != 5 {
+		t.Errorf("tests = %d", len(res.Tests))
+	}
+}

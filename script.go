@@ -22,7 +22,24 @@ import (
 //go:embed prelude.js
 var preludeSrc string
 
+//go:embed jslib/lodash.min.js
+var lodashSrc string
+
+//go:embed jslib/moment.min.js
+var momentSrc string
+
 var preludeProg = goja.MustCompile("prelude.js", preludeSrc, true)
+
+// Libraries are compiled once and only evaluated in a VM when a script
+// touches them, so scripts that don't use them pay nothing.
+func cjsWrap(name, src string) *goja.Program {
+	return goja.MustCompile(name, "(function(){var module={exports:{}};var exports=module.exports;var define;\n"+src+"\n;return module.exports;})()", true)
+}
+
+var libProgs = map[string]*goja.Program{
+	"lodash": cjsWrap("lodash.min.js", lodashSrc),
+	"moment": cjsWrap("moment.min.js", momentSrc),
+}
 
 type TestResult struct {
 	Name    string `json:"name"`
@@ -186,6 +203,25 @@ func (e *Engine) runScript(src, source string, info ScriptInfo, req *Request, re
 		}
 		b, _ := json.Marshal(m)
 		return string(b)
+	})
+	libs := map[string]goja.Value{}
+	vm.Set("__lib", func(name string) goja.Value {
+		if v, ok := libs[name]; ok {
+			return v
+		}
+		p, ok := libProgs[name]
+		if !ok {
+			return goja.Undefined()
+		}
+		// lodash reads the global "_" while initialising; returning undefined
+		// during the load stops the lazy getter from recursing.
+		libs[name] = goja.Undefined()
+		v, err := vm.RunProgram(p)
+		if err != nil {
+			panic(vm.NewGoError(err))
+		}
+		libs[name] = v
+		return v
 	})
 	vm.Set("__send", func(js string) string {
 		return e.scriptSendRequest(js, vars)

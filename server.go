@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -364,7 +365,33 @@ func (a *App) routes() http.Handler {
 		writeErr(w, 404, errors.New("monitor not found"))
 	})
 
+	// UI state (open tabs, layout) lives server-side because the native
+	// window uses a random port, so browser storage would reset every launch.
+	mux.HandleFunc("GET /api/uistate", func(w http.ResponseWriter, r *http.Request) {
+		b, err := os.ReadFile(filepath.Join(a.store.dir, "ui.json"))
+		if err != nil {
+			b = []byte("{}")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b)
+	})
+	saveUI := func(w http.ResponseWriter, r *http.Request) {
+		var v map[string]json.RawMessage
+		if err := decode(r, &v); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := writeJSONAtomic(filepath.Join(a.store.dir, "ui.json"), v); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+	mux.HandleFunc("PUT /api/uistate", saveUI)
+	mux.HandleFunc("POST /api/uistate", saveUI) // sendBeacon on window close
 	mux.HandleFunc("GET /api/bridge", a.handleBridge)
+	mux.HandleFunc("POST /api/grpc/describe", a.handleGRPCDescribe)
+	mux.HandleFunc("GET /api/grpc/stream", a.handleGRPCStream)
 	mux.HandleFunc("GET /api/stats", func(w http.ResponseWriter, r *http.Request) {
 		var ru syscall.Rusage
 		syscall.Getrusage(syscall.RUSAGE_SELF, &ru)

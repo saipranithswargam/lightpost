@@ -326,7 +326,13 @@
 
   g.pm = pm; g.postman = postman; g.console = consoleObj; g.CryptoJS = CryptoJS;
   g.atob = atob; g.btoa = btoa;
-  g.require = function (n) { if (n in modules) return modules[n]; throw new Error('Cannot find module \'' + n + '\''); };
+  g.require = function (n) {
+    if (n in modules) return modules[n];
+    if (n === 'lodash' || n === 'moment') return __lib(n);
+    throw new Error('Cannot find module \'' + n + '\'');
+  };
+  Object.defineProperty(g, '_', { configurable: true, get: function () { return __lib('lodash'); } });
+  Object.defineProperty(g, 'moment', { configurable: true, get: function () { return __lib('moment'); } });
   g.tests = {};
   g.environment = pm.environment.toObject(); g.globals = pm.globals.toObject(); g.data = pm.iterationData.toObject();
   if (response) { g.responseBody = ctx.response.body; g.responseCode = { code: ctx.response.code, name: ctx.response.status }; g.responseTime = ctx.response.time; g.responseHeaders = response.headers.toObject(); }

@@ -162,12 +162,13 @@ async function startRun(t, col, items) {
 // ---------- realtime ----------------------------------------------------------------
 function renderRealtimeTab(view, t) {
   const r = t.draft;
+  if (r.method === 'GRPC') { renderGrpcTab(view, t); return; }
   r.headers = r.headers || []; r.body = r.body || { mode: 'raw', raw: '' };
   t.rt = t.rt || { msgs: [], state: 'idle', sock: null };
   t.ui.sub = t.ui.sub === 'headers' || t.ui.sub === 'message' ? t.ui.sub : 'message';
   const rt = t.rt;
   const root = h('div', { class: 'req-view' });
-  const modeSel = h('select', { style: { width: '120px', fontWeight: 600 } }, [['WS', 'WebSocket'], ['SOCKETIO', 'Socket.IO'], ['SSE', 'SSE']].map(([v, l]) => h('option', { value: v, selected: r.method === v }, l)));
+  const modeSel = h('select', { style: { width: '120px', fontWeight: 600 } }, [['WS', 'WebSocket'], ['SOCKETIO', 'Socket.IO'], ['SSE', 'SSE'], ['GRPC', 'gRPC']].map(([v, l]) => h('option', { value: v, selected: r.method === v }, l)));
   modeSel.addEventListener('change', () => { r.method = modeSel.value; markDirty(t); renderView(); });
   const urlIn = h('input', { value: r.url, placeholder: r.method === 'SSE' ? 'https://example.com/events' : r.method === 'SOCKETIO' ? 'http://localhost:3000' : 'wss://echo.websocket.org', style: { flex: 1, fontFamily: 'var(--mono)' }, spellcheck: 'false', oninput: e => { r.url = e.target.value; markDirty(t); } });
   const connected = rt.state === 'open' || rt.state === 'connecting';
@@ -417,3 +418,142 @@ function renderMonitorTab(view, t) {
   loadRuns();
   view.append(page);
 }
+
+// ---------- gRPC ------------------------------------------------------------------------
+function grpcTargetOf(r) {
+  const g = r.grpc || {};
+  return { target: r.url, tls: !!g.tls, protoFiles: g.protoFiles || [], importPaths: g.importPaths || [], metadata: r.headers, envId: S.ws.activeEnvId };
+}
+
+function renderGrpcTab(view, t) {
+  const r = t.draft;
+  r.grpc = r.grpc || { method: '', tls: false, protoFiles: [] };
+  r.headers = r.headers || []; r.body = r.body || { mode: 'raw', raw: '{}' };
+  t.rt = t.rt || { msgs: [], state: 'idle', sock: null };
+  t.ui.sub = t.ui.sub === 'metadata' || t.ui.sub === 'definition' ? t.ui.sub : 'message';
+  const rt = t.rt;
+  const g = r.grpc;
+  const methods = (t.grpcServices || []).flatMap(s => s.methods);
+  const cur = methods.find(m => m.fullName === g.method);
+  const kind = cur ? (cur.clientStreaming && cur.serverStreaming ? 'Bidirectional streaming' : cur.clientStreaming ? 'Client streaming' : cur.serverStreaming ? 'Server streaming' : 'Unary') : '';
+  const streamingClient = cur && cur.clientStreaming;
+  const active = rt.state === 'open' || rt.state === 'connecting';
+
+  const modeSel = h('select', { style: { width: '120px', fontWeight: 600 } }, [['WS', 'WebSocket'], ['SOCKETIO', 'Socket.IO'], ['SSE', 'SSE'], ['GRPC', 'gRPC']].map(([v, l]) => h('option', { value: v, selected: r.method === v }, l)));
+  modeSel.addEventListener('change', () => { r.method = modeSel.value; markDirty(t); renderView(); });
+  const urlIn = h('input', { value: r.url, placeholder: 'localhost:50051', style: { flex: 1, fontFamily: 'var(--mono)' }, spellcheck: 'false', oninput: e => { r.url = e.target.value; markDirty(t); } });
+  const tlsCk = h('label', { class: 'hint', style: { display: 'flex', gap: '4px', alignItems: 'center' }, title: 'Use TLS (grpcs)' }, h('input', { type: 'checkbox', checked: g.tls, onchange: e => { g.tls = e.target.checked; markDirty(t); } }), 'TLS');
+  const methodSel = h('select', { style: { minWidth: '260px', maxWidth: '420px', fontFamily: 'var(--mono)', fontSize: '12px' }, onchange: e => {
+    g.method = e.target.value;
+    const m = methods.find(x => x.fullName === g.method);
+    if (m && (!r.body.raw || r.body.raw.trim() === '{}' || t.grpcAutoBody)) { r.body.raw = m.example; t.grpcAutoBody = true; }
+    markDirty(t); renderView();
+  } }, h('option', { value: '' }, methods.length ? 'Select a method' : 'Load methods →'),
+    (t.grpcServices || []).map(s => h('optgroup', { label: s.name }, s.methods.map(m => h('option', { value: m.fullName, selected: m.fullName === g.method }, m.name + (m.clientStreaming || m.serverStreaming ? '  ⇅' : ''))))),
+    g.method && !methods.length ? h('option', { value: g.method, selected: true }, g.method) : null);
+  const load = async () => {
+    try {
+      t.grpcServices = await api('/api/grpc/describe', { method: 'POST', body: grpcTargetOf(r) });
+      toast(`Loaded ${t.grpcServices.reduce((n, s) => n + s.methods.length, 0)} methods via ${g.protoFiles && g.protoFiles.length ? '.proto files' : 'server reflection'}`);
+      renderView();
+    } catch (e) { toast(e.message, true); }
+  };
+  const invokeLabel = active ? (rt.state === 'connecting' ? 'Cancel' : 'Cancel') : streamingClient ? 'Start stream' : 'Invoke';
+  const invokeBtn = h('button', { class: 'btn ' + (active ? '' : 'primary') + ' send-btn', onclick: () => (active ? grpcCancel(t) : grpcInvoke(t)) }, invokeLabel);
+  const head = h('div', { class: 'req-head' },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, crumbs(t), h('span', { class: 'pill' + (rt.state === 'open' ? ' on' : '') }, h('span', { class: 'd' }), rt.state === 'open' ? 'Streaming' : 'Idle'), h('div', { class: 'grow' }),
+      h('button', { class: 'btn sm', onclick: () => saveRequestTab(t) }, 'Save')),
+    h('div', { class: 'url-bar' }, modeSel, urlIn, tlsCk, methodSel, h('button', { class: 'btn', onclick: load, title: 'Load services' }, '↻'), invokeBtn),
+    kind ? h('div', { class: 'hint', style: { marginTop: '6px' } }, `${kind} · ${cur.inputType} → ${cur.outputType}`) : null);
+
+  const subBar = h('div', { class: 'subtabs' });
+  const pane = h('div', { style: { flex: 'none', maxHeight: '45%', overflow: 'auto' } });
+  const drawSub = () => {
+    subBar.innerHTML = '';
+    [['message', 'Message'], ['metadata', 'Metadata'], ['definition', 'Service definition']].forEach(([k, l]) => subBar.append(h('button', { class: t.ui.sub === k ? 'active' : '', onclick: () => { t.ui.sub = k; drawSub(); } }, l)));
+    pane.innerHTML = '';
+    if (t.ui.sub === 'metadata') {
+      pane.append(h('div', { style: { padding: '10px 14px' } }, kvTable({ title: 'Request metadata', rows: r.headers.map(x => ({ ...x })), onChange: rows => { r.headers = rows; markDirty(t); } })));
+    } else if (t.ui.sub === 'definition') {
+      const files = h('div', { style: { padding: '10px 14px' } },
+        h('div', { class: 'radios' },
+          h('label', null, h('input', { type: 'radio', name: 'gdef-' + t.id, checked: !(g.protoFiles || []).length, onchange: () => { g.protoFiles = []; markDirty(t); drawSub(); } }), 'Server reflection'),
+          h('label', null, h('input', { type: 'radio', name: 'gdef-' + t.id, checked: !!(g.protoFiles || []).length, onchange: () => { g.protoFiles = g.protoFiles && g.protoFiles.length ? g.protoFiles : ['']; drawSub(); } }), 'Import .proto files')));
+      if ((g.protoFiles || []).length) {
+        g.protoFiles.forEach((f, i) => files.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '6px' } },
+          h('input', { value: f, placeholder: '/path/to/service.proto', style: { flex: 1, fontFamily: 'var(--mono)' }, oninput: e => { g.protoFiles[i] = e.target.value; markDirty(t); } }),
+          h('button', { class: 'btn sm', onclick: async () => { try { const { path } = await api('/api/pickfile', { method: 'POST', body: {} }); g.protoFiles[i] = path; markDirty(t); drawSub(); } catch { /* cancelled */ } } }, 'Choose'),
+          h('button', { class: 'icon-btn', onclick: () => { g.protoFiles.splice(i, 1); if (!g.protoFiles.length) g.protoFiles = ['']; markDirty(t); drawSub(); } }, '×'))));
+        files.append(h('button', { class: 'btn sm', onclick: () => { g.protoFiles.push(''); drawSub(); } }, 'Add file'),
+          h('div', { class: 'form-grid', style: { marginTop: '10px' } }, h('label', null, 'Import paths'), h('input', { value: (g.importPaths || []).join(', '), placeholder: 'Defaults to each file\'s folder', oninput: e => { g.importPaths = e.target.value.split(',').map(s => s.trim()).filter(Boolean); markDirty(t); } })));
+      } else files.append(h('p', { class: 'hint' }, 'Lightpost asks the server for its services through the gRPC reflection API. Press ↻ to load methods.'));
+      pane.append(files);
+    } else {
+      const ta = codeArea(r.body.raw || '{}', v => { r.body.raw = v; t.grpcAutoBody = false; markDirty(t); }, { style: { height: '170px' } });
+      ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); rt.state === 'open' && streamingClient ? grpcSend(t) : grpcInvoke(t); } });
+      pane.append(h('div', { class: 'rt-compose' }, ta, h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+        cur ? h('button', { class: 'btn sm', onclick: () => { r.body.raw = cur.example; markDirty(t); drawSub(); } }, 'Generate example message') : null,
+        h('button', { class: 'btn sm', onclick: () => { try { r.body.raw = JSON.stringify(JSON.parse(r.body.raw), null, 2); drawSub(); } catch { toast('Not valid JSON', true); } } }, 'Beautify'),
+        h('div', { class: 'grow' }),
+        streamingClient && rt.state === 'open' ? [h('button', { class: 'btn primary', onclick: () => grpcSend(t) }, 'Send message'), h('button', { class: 'btn', onclick: () => grpcEnd(t) }, 'End stream')] : null)));
+    }
+  };
+  drawSub();
+
+  const log = h('div', { class: 'rt-log' });
+  const drawLog = () => {
+    log.innerHTML = '';
+    if (!rt.msgs.length) log.append(h('div', { class: 'res-empty' }, 'Responses, headers, trailers and status appear here.'));
+    for (const m of rt.msgs.slice(-2000)) {
+      const sym = { in: '↓', out: '↑', sys: '•', err: '!' }[m.dir];
+      const row = h('div', { class: 'rt-msg ' + m.dir }, h('span', { class: 'd' }, sym), h('div', { class: 'body' }, m.data), h('span', { class: 't' }, fmtTime(m.time)));
+      row.addEventListener('click', () => row.classList.toggle('expanded'));
+      log.append(row);
+    }
+    log.scrollTop = log.scrollHeight;
+  };
+  t.ui.drawLog = drawLog;
+  const res = h('div', { class: 'res-pane', style: { borderTop: '1px solid var(--line)' } },
+    h('div', { class: 'res-tools' }, h('b', null, 'Response'), rt.status ? h('span', { class: rt.status.code === 'OK' ? 'st-2' : 'st-5', style: { fontWeight: 600 } }, rt.status.code) : null,
+      rt.status ? h('span', { class: 'hint' }, fmtMs(rt.status.elapsedMs) + (rt.status.message ? ' · ' + rt.status.message : '')) : null,
+      h('div', { class: 'grow' }), h('button', { class: 'btn sm', onclick: () => { rt.msgs = []; rt.status = null; renderView(); } }, 'Clear')), log);
+  view.append(h('div', { class: 'req-view' }, head, subBar, pane, res));
+  drawLog();
+}
+
+function grpcInvoke(t) {
+  const r = t.draft, rt = t.rt;
+  if (!r.url.trim()) { toast('Enter the server address (host:port)', true); return; }
+  if (!r.grpc.method) { toast('Load and select a method first', true); return; }
+  rt.state = 'connecting';
+  rt.status = null;
+  renderView();
+  const sock = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/grpc/stream');
+  rt.sock = sock;
+  sock.onopen = () => sock.send(JSON.stringify(Object.assign({ type: 'connect', method: r.grpc.method }, grpcTargetOf(r))));
+  sock.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    switch (m.type) {
+      case 'open': {
+        rt.state = 'open';
+        const [cs] = m.data.split('/');
+        rtPush(t, { dir: 'sys', data: 'Calling ' + m.method });
+        if (cs !== 'true') sock.send(JSON.stringify({ type: 'send', data: r.body.raw || '{}' }));
+        if (S.active === t.id) renderView();
+        break;
+      }
+      case 'sent': rtPush(t, { dir: 'out', data: m.data }); break;
+      case 'message': rtPush(t, { dir: 'in', data: m.data }); break;
+      case 'headers': rtPush(t, { dir: 'sys', data: 'Response metadata\n' + (m.headers || []).map(x => x.key + ': ' + x.value).join('\n') }); break;
+      case 'error': rtPush(t, { dir: 'err', data: m.message }); break;
+      case 'end':
+        rt.status = { code: m.code, message: m.message, elapsedMs: m.elapsedMs };
+        rtPush(t, { dir: m.code === 'OK' ? 'sys' : 'err', data: `Status ${m.code}${m.message ? ': ' + m.message : ''}` + ((m.headers || []).length ? '\nTrailers\n' + m.headers.map(x => x.key + ': ' + x.value).join('\n') : '') });
+        break;
+    }
+  };
+  sock.onclose = () => { rt.state = 'idle'; rt.sock = null; if (S.active === t.id) renderView(); };
+}
+function grpcSend(t) { const s = t.rt.sock; if (s) s.send(JSON.stringify({ type: 'send', data: t.draft.body.raw || '{}' })); }
+function grpcEnd(t) { const s = t.rt.sock; if (s) s.send(JSON.stringify({ type: 'end' })); }
+function grpcCancel(t) { const s = t.rt.sock; if (s) { try { s.send(JSON.stringify({ type: 'cancel' })); } catch { /* closed */ } setTimeout(() => s.close(), 200); } }

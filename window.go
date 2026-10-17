@@ -56,6 +56,8 @@ func runWindow(url string) {
 	w.SetTitle("Lightpost")
 	w.SetSize(1360, 860, webview.HintNone)
 	C.lpInstallMenu()
+	// Re-install once the run loop is up, in case app launch replaced it.
+	w.Dispatch(func() { C.lpInstallMenu() })
 	w.Navigate(url)
 	w.Run()
 }

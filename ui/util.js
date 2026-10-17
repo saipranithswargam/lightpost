@@ -47,10 +47,15 @@ function fmtTime(t) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+// UI state is persisted by the server (see /api/uistate); load() runs at boot.
 const store = {
-  get(k, def) { try { const v = localStorage.getItem('lp.' + k); return v == null ? def : JSON.parse(v); } catch { return def; } },
-  set(k, v) { try { localStorage.setItem('lp.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } }
+  data: {},
+  async load() { try { this.data = await (await fetch('/api/uistate')).json() || {}; } catch { this.data = {}; } },
+  get(k, def) { return k in this.data ? this.data[k] : def; },
+  set(k, v) { this.data[k] = v; this.flush(); },
+  flush: null
 };
+store.flush = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => fetch('/api/uistate', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(store.data) }).catch(() => {}), 500); }; })();
 
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: {} };

@@ -38,6 +38,15 @@ type RequestSettings struct {
 	TimeoutMs       int   `json:"timeoutMs,omitempty"`
 }
 
+// GRPCConfig is stored on realtime items whose Method is "GRPC"; URL holds
+// the server address, Headers the metadata and Body.Raw the message.
+type GRPCConfig struct {
+	Method      string   `json:"method,omitempty"`
+	TLS         bool     `json:"tls,omitempty"`
+	ProtoFiles  []string `json:"protoFiles,omitempty"`
+	ImportPaths []string `json:"importPaths,omitempty"`
+}
+
 type Example struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -60,6 +69,7 @@ type Request struct {
 	TestScript  string          `json:"testScript,omitempty"`
 	Settings    RequestSettings `json:"settings"`
 	Examples    []Example       `json:"examples,omitempty"`
+	GRPC        *GRPCConfig     `json:"grpc,omitempty"`
 	Description string          `json:"description,omitempty"`
 }
 

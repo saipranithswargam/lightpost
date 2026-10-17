@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 )
 
@@ -146,6 +147,8 @@ func cliRun(args []string) int {
 	}
 	// The CLI store must not write history into the user's workspace.
 	app.engine.store = &Store{dir: os.TempDir(), ws: ws}
+	// Like newman, CLI runs start with an empty cookie jar and don't persist it.
+	app.engine.jar = &Jar{path: filepath.Join(os.TempDir(), "lightpost-cli-cookies.json")}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
